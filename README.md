@@ -1,6 +1,10 @@
 # YoloStudyRoute
 YOLO学习路线
 
++ YOLO学习路线
+  + [YOLO入门](https://coding.imooc.com/class/298.html)
+  + [YOLO全路线梳理](https://study.163.com/course/introduction.htm?courseId=1209871809#/courseDetail?tab=1)
+
 + 目标检测问题定义
   + 目标检测是在图片中对可变数量的目标进行查找和分类
     + 目标种类和数量问题
@@ -101,6 +105,8 @@ YOLO学习路线
       + 输入尺寸固定
       + 小目标检测效果差
         + 同一各自包含多个目标时，仅预测一个（IOU最高）
+      + 每个CELL只能识别一个类别，如果重叠无法解决
+      + 小物体检测效果一般，长宽比可选的但单一
   + YOLOV2 算法
     + 特点
       + 引入了anchor box的思想
@@ -108,7 +114,8 @@ YOLO学习路线
       + 联合使用coco 和 imagenet物体分类标注数据
       + 识别种类，精度、速度和定位准确性等都有大幅提升
     + 改进
-      + Batch Normalization: v2中取消了Drop out 均使用BN
+      + Batch Normalization: v2中取消了Drop out 均使用BN. 经过BN处理后的网络会提升2%的mAP
+      + 网络的每一层的输入都做了归一化，收敛相对更容易
       + 高分辨率分类器：以448*448的分辨率微调最初的分类网络
       + Anchors Boxes：使用卷积代替FC，输入尺度：416，max pooling下采样，预测超过1000个，mAP降低，recall显著提高
       + 细粒度特征：添加pass through layer,把浅层特征图（26*26）链接到深层特征图，Resnet中的identity mapping。把26*26*512 的特征图叠加成13*13*2048的特征图，与深层特征图相连接，增加细粒度特征
@@ -117,8 +124,19 @@ YOLO学习路线
       + 主要使用 3*3卷积
       + pooling之后channel数加
       + global average pooling 
-      + 1 *1 卷积压缩特征表示
+      + 1 *1 卷积压缩特征表示，节省参数
       + batch normalization
+      + 没有FC层，5次降采样
+    + 聚类提取先验框
+      + faster-rcnn系列选择的先验比例都是常规的，但是不一定完全适合数据集
+      + k-means聚类中的距离
+    + Anchor-box
+      + 通过引入anchor boxes，使得预测的box数量更多
+      + 跟faster-rcnn系列不同的是先验框并不是直接按照长宽固定比给定
+    + 感受野
+      + 特征图上的点能看到原始图像多大区域
+      + 堆叠小的卷积核所需的参数更少一些，并且卷积过程越多，特征提取也会越细致，加入的非线性变换也随着增多，还不会增大权重参数个数，这就是VGG网络的基本出发点，用小的卷积核来完成体特征提取操作。
+      + 最后一层感受野太大，小目标可能丢失，需融合之前的特征
   + YOLOV3 算法 
     + 特点
       + 速度和精度最均衡的目标检测网络
