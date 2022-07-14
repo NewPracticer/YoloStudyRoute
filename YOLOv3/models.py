@@ -19,17 +19,20 @@ def create_modules(module_defs):
     """
     hyperparams = module_defs.pop(0)
     output_filters = [int(hyperparams["channels"])]
+    # 获取模型的每个部分配置
     module_list = nn.ModuleList()
     for module_i, module_def in enumerate(module_defs):
         modules = nn.Sequential()
-
+        # 当这一层是卷积时
         if module_def["type"] == "convolutional":
+            # 加入 bn
             bn = int(module_def["batch_normalize"])
             filters = int(module_def["filters"])
             kernel_size = int(module_def["size"])
             pad = (kernel_size - 1) // 2
             modules.add_module(
                 f"conv_{module_i}",
+                #调用卷积实际的ａｐｉ
                 nn.Conv2d(
                     in_channels=output_filters[-1],
                     out_channels=filters,
@@ -39,6 +42,7 @@ def create_modules(module_defs):
                     bias=not bn,
                 ),
             )
+            # 卷积 + BN + relu
             if bn:
                 modules.add_module(f"batch_norm_{module_i}", nn.BatchNorm2d(filters, momentum=0.9, eps=1e-5))
             if module_def["activation"] == "leaky":
@@ -51,33 +55,37 @@ def create_modules(module_defs):
                 modules.add_module(f"_debug_padding_{module_i}", nn.ZeroPad2d((0, 1, 0, 1)))
             maxpool = nn.MaxPool2d(kernel_size=kernel_size, stride=stride, padding=int((kernel_size - 1) // 2))
             modules.add_module(f"maxpool_{module_i}", maxpool)
-
+        # 上采样
         elif module_def["type"] == "upsample":
             upsample = Upsample(scale_factor=int(module_def["stride"]), mode="nearest")
             modules.add_module(f"upsample_{module_i}", upsample)
-
+        # route层做的事拼接。router的参数layer决定之前的哪一层进行拼接
         elif module_def["type"] == "route": # 输入1：26*26*256 输入2：26*26*128  输出：26*26*（256+128）
             layers = [int(x) for x in module_def["layers"].split(",")]
             filters = sum([output_filters[1:][i] for i in layers])
             modules.add_module(f"route_{module_i}", EmptyLayer())
-
+        # shortcut from=-3  数值上的相加，并未维度上的拼接
         elif module_def["type"] == "shortcut":
             filters = output_filters[1:][int(module_def["from"])]
             modules.add_module(f"shortcut_{module_i}", EmptyLayer())
-
+        #
         elif module_def["type"] == "yolo":
+            # 指定先验框的id
             anchor_idxs = [int(x) for x in module_def["mask"].split(",")]
             # Extract anchors
+            # 获取先验框的数值
             anchors = [int(x) for x in module_def["anchors"].split(",")]
             anchors = [(anchors[i], anchors[i + 1]) for i in range(0, len(anchors), 2)]
             anchors = [anchors[i] for i in anchor_idxs]
             num_classes = int(module_def["classes"])
             img_size = int(hyperparams["height"])
             # Define detection layer
+            # 构建yolo层
             yolo_layer = YOLOLayer(anchors, num_classes, img_size)
             modules.add_module(f"yolo_{module_i}", yolo_layer)
         # Register module list and number of output filters
         module_list.append(modules)
+        # 加入最终生成的图个数
         output_filters.append(filters)
 
     return hyperparams, module_list
@@ -112,6 +120,7 @@ class YOLOLayer(nn.Module):
         self.num_anchors = len(anchors)
         self.num_classes = num_classes
         self.ignore_thres = 0.5
+        # 损失函数
         self.mse_loss = nn.MSELoss()
         self.bce_loss = nn.BCELoss()
         self.obj_scale = 1
@@ -135,30 +144,39 @@ class YOLOLayer(nn.Module):
     def forward(self, x, targets=None, img_dim=None):
         # Tensors for cuda support
         print (x.shape)
+        # 判断是用cpu还是gpu运行
         FloatTensor = torch.cuda.FloatTensor if x.is_cuda else torch.FloatTensor
         LongTensor = torch.cuda.LongTensor if x.is_cuda else torch.LongTensor
         ByteTensor = torch.cuda.ByteTensor if x.is_cuda else torch.ByteTensor
-
+        # 当前图像输入大小
         self.img_dim = img_dim
+        #一次训练几张图像
         num_samples = x.size(0)
+        # 当前网格的大小
         grid_size = x.size(2)
 
         prediction = (
+            # 一次训练几张图像，候选框的个数，当前预测的类别，当前网格的大小
             x.view(num_samples, self.num_anchors, self.num_classes + 5, grid_size, grid_size)
             .permute(0, 1, 3, 4, 2)
             .contiguous()
         )
         print (prediction.shape)
         # Get outputs
+        # 获取结果
         x = torch.sigmoid(prediction[..., 0])  # Center x
         y = torch.sigmoid(prediction[..., 1])  # Center y
         w = prediction[..., 2]  # Width
         h = prediction[..., 3]  # Height
+        # 获取置信度
         pred_conf = torch.sigmoid(prediction[..., 4])  # Conf
+        # 预测最终类别
         pred_cls = torch.sigmoid(prediction[..., 5:])  # Cls pred.
 
         # If grid size does not match current we compute new offsets
+        # 还原数据在图中的真实位置
         if grid_size != self.grid_size:
+            # 计算网格偏移，将相对位置转化成绝对位置
             self.compute_grid_offsets(grid_size, cuda=x.is_cuda) #相对位置得到对应的绝对位置比如之前的位置是0.5,0.5变为 11.5，11.5这样的
 
         # Add offset and scale with anchors #特征图中的实际位置
@@ -171,8 +189,8 @@ class YOLOLayer(nn.Module):
         output = torch.cat(
             (
                 pred_boxes.view(num_samples, -1, 4) * self.stride, #还原到原始图中
-                pred_conf.view(num_samples, -1, 1),
-                pred_cls.view(num_samples, -1, self.num_classes),
+                pred_conf.view(num_samples, -1, 1),# 置信度
+                pred_cls.view(num_samples, -1, self.num_classes),#类别
             ),
             -1,
         )
@@ -187,7 +205,14 @@ class YOLOLayer(nn.Module):
                 anchors=self.scaled_anchors,
                 ignore_thres=self.ignore_thres,
             )
-            # iou_scores：真实值与最匹配的anchor的IOU得分值 class_mask：分类正确的索引  obj_mask：目标框所在位置的最好anchor置为1 noobj_mask obj_mask那里置0，还有计算的iou大于阈值的也置0，其他都为1 tx, ty, tw, th, 对应的对于该大小的特征图的xywh目标值也就是我们需要拟合的值 tconf 目标置信度
+            #计算损失值
+            # iou_scores：真实值与最匹配的anchor的IOU得分值
+            # class_mask：分类正确的索引
+            # obj_mask：目标框所在位置的最好anchor置为1
+            # noobj_mask obj_mask那里置0，
+            # 还有计算的iou大于阈值的也置0，其他都为1 tx, ty, tw, th,
+            # 对应的对于该大小的特征图的xywh目标值也就是我们需要拟合的值
+            # tconf 目标置信度
             # Loss : Mask outputs to ignore non-existing objects (except with conf. loss)
             loss_x = self.mse_loss(x[obj_mask], tx[obj_mask]) # 只计算有目标的
             loss_y = self.mse_loss(y[obj_mask], ty[obj_mask])
@@ -195,9 +220,12 @@ class YOLOLayer(nn.Module):
             loss_h = self.mse_loss(h[obj_mask], th[obj_mask])
             loss_conf_obj = self.bce_loss(pred_conf[obj_mask], tconf[obj_mask])
             loss_conf_noobj = self.bce_loss(pred_conf[noobj_mask], tconf[noobj_mask])
-            loss_conf = self.obj_scale * loss_conf_obj + self.noobj_scale * loss_conf_noobj #有物体越接近1越好 没物体的越接近0越好
-            loss_cls = self.bce_loss(pred_cls[obj_mask], tcls[obj_mask]) #分类损失
-            total_loss = loss_x + loss_y + loss_w + loss_h + loss_conf + loss_cls #总损失
+            # 有物体越接近1越好 没物体的越接近0越好
+            loss_conf = self.obj_scale * loss_conf_obj + self.noobj_scale * loss_conf_noobj
+            # 分类损失
+            loss_cls = self.bce_loss(pred_cls[obj_mask], tcls[obj_mask])
+            # 总损失
+            total_loss = loss_x + loss_y + loss_w + loss_h + loss_conf + loss_cls
 
             # Metrics
             cls_acc = 100 * class_mask[obj_mask].mean()
@@ -243,20 +271,25 @@ class Darknet(nn.Module):
         self.img_size = img_size
         self.seen = 0
         self.header_info = np.array([0, 0, 0, self.seen, 0], dtype=np.int32)
-    #  一个x
+    #  darknet前向传播
     def forward(self, x, targets=None):
         img_dim = x.shape[2]
         loss = 0
+        # 当前层输出结果，以及yolo层输出结果
         layer_outputs, yolo_outputs = [], []
         for i, (module_def, module) in enumerate(zip(self.module_defs, self.module_list)):
+            # 如果模型类型是 卷积或上采样，直接采用即可
             if module_def["type"] in ["convolutional", "upsample", "maxpool"]:
                 x = module(x)
             elif module_def["type"] == "route":
+                # 将两层拼接，从维度上拼接
                 x = torch.cat([layer_outputs[int(layer_i)] for layer_i in module_def["layers"].split(",")], 1)
             elif module_def["type"] == "shortcut":
                 layer_i = int(module_def["from"])
+                # shortcut 做加法
                 x = layer_outputs[-1] + layer_outputs[layer_i]
             elif module_def["type"] == "yolo":
+                # 跳转到yolo层的前向传播
                 x, layer_loss = module[0](x, targets, img_dim)
                 loss += layer_loss
                 yolo_outputs.append(x)

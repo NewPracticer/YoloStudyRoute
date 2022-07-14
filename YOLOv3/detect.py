@@ -20,7 +20,7 @@ from torch.autograd import Variable
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.ticker import NullLocator
-
+# 测试
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--image_folder", type=str, default="data/samples", help="path to dataset")
@@ -41,6 +41,7 @@ if __name__ == "__main__":
     os.makedirs("output", exist_ok=True)
 
     # Set up model
+    # 构建网络模型
     model = Darknet(opt.model_def, img_size=opt.img_size).to(device)
 
     if opt.weights_path.endswith(".weights"):
@@ -49,16 +50,16 @@ if __name__ == "__main__":
     else:
         # Load checkpoint weights
         model.load_state_dict(torch.load(opt.weights_path))
-
+    # 更改模型模式，不对模型参数改变，只有前向传播
     model.eval()  # Set in evaluation mode
-
+    # 到哪里读取数据
     dataloader = DataLoader(
         ImageFolder(opt.image_folder, img_size=opt.img_size),
         batch_size=opt.batch_size,
         shuffle=False,
         num_workers=opt.n_cpu,
     )
-
+    # 读取类文件。获取id 和 类名称的对应
     classes = load_classes(opt.class_path)  # Extracts class labels from file
 
     Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
@@ -74,7 +75,9 @@ if __name__ == "__main__":
 
         # Get detections
         with torch.no_grad():
+            # 对输入图片进行预测
             detections = model(input_imgs)
+            # nms 非极大值抑制
             detections = non_max_suppression(detections, opt.conf_thres, opt.nms_thres)
 
         # Log progress
@@ -93,6 +96,7 @@ if __name__ == "__main__":
 
     print("\nSaving images:")
     # Iterate through images and save plot of detections
+    # 迭代图片，并且将预测值绘制到图片上
     for img_i, (path, detections) in enumerate(zip(imgs, img_detections)):
 
         print("(%d) Image: '%s'" % (img_i, path))

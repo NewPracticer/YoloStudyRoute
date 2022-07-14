@@ -121,11 +121,14 @@ if __name__ == "__main__":
             print ('imgs',imgs.shape)
             print ('targets',targets.shape)
             loss, outputs = model(imgs, targets)
+            # 反向传播
             loss.backward()
 
             if batches_done % opt.gradient_accumulations:
                 # Accumulates gradient before each step
+                # 梯度更新
                 optimizer.step()
+                # 梯度置零
                 optimizer.zero_grad()
 
             # ----------------
@@ -191,6 +194,6 @@ if __name__ == "__main__":
                 ap_table += [[c, class_names[c], "%.5f" % AP[i]]]
             print(AsciiTable(ap_table).table)
             print(f"---- mAP {AP.mean()}")
-
+        # 模型保存
         if epoch % opt.checkpoint_interval == 0:
             torch.save(model.state_dict(), f"checkpoints/yolov3_ckpt_%d.pth" % epoch)
