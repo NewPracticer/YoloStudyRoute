@@ -227,3 +227,21 @@ YOLO学习路线
     + MISH
       + relu有点太绝对了，mish更符合实际
       + 虽然计算量增加，效果会提升
+  + YOLO-V5算法
+    + 特点
+      + 相对于YOLOV4工程化
+    + 模型
+      + 模型越小，速度越快，精度越差
+    + 模型转化可视化
+      + 使用models下的export.py将pt文件转化成onnx
+      + https://lutzroeder.github.io/netron
+    + Focus模块
+      + 先分块，后拼接，再卷积
+      + 间隔的来完成分块任务
+      + 此时卷积输入的C就为12了
+      + 参考实验结果并不多，目的是为了加速，并不会增加AP
+    + BottleneckCSP
+      + 注意叠加个数
+      + 里面还包括了resnet模块
+      + 与V3把本类似，多了CSP
+      + 效果有一定提升
